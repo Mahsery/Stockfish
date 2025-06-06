@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -21,107 +19,63 @@
 #ifndef MOVEPICK_H_INCLUDED
 #define MOVEPICK_H_INCLUDED
 
-#include <algorithm> // For std::max
-#include <cstring>   // For std::memset
-
+#include "history.h"
 #include "movegen.h"
-#include "position.h"
-#include "search.h"
 #include "types.h"
 
+namespace Stockfish {
 
-/// The Stats struct stores moves statistics. According to the template parameter
-/// the class can store History and Countermoves. History records how often
-/// different moves have been successful or unsuccessful during the current search
-/// and is used for reduction and move ordering decisions.
-/// Countermoves store the move that refute a previous one. Entries are stored
-/// using only the moving piece and destination square, hence two moves with
-/// different origin but same destination and piece will be considered identical.
-template<typename T, bool CM = false>
-struct Stats {
+class Position;
 
-  static const Value Max = Value(1 << 28);
-
-  const T* operator[](Piece pc) const { return table[pc]; }
-  T* operator[](Piece pc) { return table[pc]; }
-  void clear() { std::memset(table, 0, sizeof(table)); }
-
-  void update(Piece pc, Square to, Move m) { table[pc][to] = m; }
-
-  void update(Piece pc, Square to, Value v) {
-
-    if (abs(int(v)) >= 324)
-        return;
-
-    table[pc][to] -= table[pc][to] * abs(int(v)) / (CM ? 936 : 324);
-    table[pc][to] += int(v) * 32;
-  }
-
-private:
-  T table[PIECE_NB][SQUARE_NB];
-};
-
-typedef Stats<Move> MoveStats;
-typedef Stats<Value, false> HistoryStats;
-typedef Stats<Value,  true> CounterMoveStats;
-typedef Stats<CounterMoveStats> CounterMoveHistoryStats;
-
-struct FromToStats {
-
-    Value get(Color c, Move m) const { return table[c][from_sq(m)][to_sq(m)]; }
-    void clear() { std::memset(table, 0, sizeof(table)); }
-
-    void update(Color c, Move m, Value v)
-    {
-        if (abs(int(v)) >= 324)
-            return;
-
-        Square f = from_sq(m);
-        Square t = to_sq(m);
-
-        table[c][f][t] -= table[c][f][t] * abs(int(v)) / 324;
-        table[c][f][t] += int(v) * 32;
-    }
-
-private:
-    Value table[COLOR_NB][SQUARE_NB][SQUARE_NB];
-};
-
-/// MovePicker class is used to pick one pseudo legal move at a time from the
-/// current position. The most important method is next_move(), which returns a
-/// new pseudo legal move each time it is called, until there are no moves left,
-/// when MOVE_NONE is returned. In order to improve the efficiency of the alpha
-/// beta algorithm, MovePicker attempts to return the moves which are most likely
-/// to get a cut-off first.
-
+// The MovePicker class is used to pick one pseudo-legal move at a time from the
+// current position. The most important method is next_move(), which emits one
+// new pseudo-legal move on every call, until there are no moves left, when
+// Move::none() is returned. In order to improve the efficiency of the alpha-beta
+// algorithm, MovePicker attempts to return the moves which are most likely to get
+// a cut-off first.
 class MovePicker {
-public:
-  MovePicker(const MovePicker&) = delete;
-  MovePicker& operator=(const MovePicker&) = delete;
 
-  MovePicker(const Position&, Move, Value);
-  MovePicker(const Position&, Move, Depth, Square);
-  MovePicker(const Position&, Move, Depth, Search::Stack*);
+   public:
+    MovePicker(const MovePicker&)            = delete;
+    MovePicker& operator=(const MovePicker&) = delete;
+    MovePicker(const Position&,
+               Move,
+               Depth,
+               const ButterflyHistory*,
+               const LowPlyHistory*,
+               const CapturePieceToHistory*,
+               const PieceToHistory**,
+               const PawnHistory*,
+               int);
+    MovePicker(const Position&, Move, int, const CapturePieceToHistory*);
+    Move next_move();
+    void skip_quiet_moves();
+    bool can_move_king_or_pawn() const;
 
-  Move next_move();
+   private:
+    template<typename Pred>
+    Move select(Pred);
+    template<GenType>
+    void     score();
+    ExtMove* begin() { return cur; }
+    ExtMove* end() { return endCur; }
 
-private:
-  template<GenType> void score();
-  void generate_next_stage();
-  ExtMove* begin() { return moves; }
-  ExtMove* end() { return endMoves; }
-
-  const Position& pos;
-  const Search::Stack* ss;
-  Move countermove;
-  Depth depth;
-  Move ttMove;
-  ExtMove killers[3];
-  Square recaptureSquare;
-  Value threshold;
-  int stage;
-  ExtMove* endBadCaptures = moves + MAX_MOVES - 1;
-  ExtMove moves[MAX_MOVES], *cur = moves, *endMoves = moves;
+    const Position&              pos;
+    const ButterflyHistory*      mainHistory;
+    const LowPlyHistory*         lowPlyHistory;
+    const CapturePieceToHistory* captureHistory;
+    const PieceToHistory**       continuationHistory;
+    const PawnHistory*           pawnHistory;
+    Move                         ttMove;
+    ExtMove *                    cur, *endCur, *endBadCaptures, *endBadQuiets;
+    int                          stage;
+    int                          threshold;
+    Depth                        depth;
+    int                          ply;
+    bool                         skipQuiets = false;
+    ExtMove                      moves[MAX_MOVES];
 };
 
-#endif // #ifndef MOVEPICK_H_INCLUDED
+}  // namespace Stockfish
+
+#endif  // #ifndef MOVEPICK_H_INCLUDED
